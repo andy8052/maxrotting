@@ -1132,6 +1132,40 @@ function toggleOriginalText() {
   }
 }
 
+// Check if a node is inside an editable context
+function isEditable(node) {
+  let current = node;
+  while (current && current !== document.body) {
+    if (current.nodeType === Node.ELEMENT_NODE) {
+      const tagName = current.tagName.toLowerCase();
+      // Skip form inputs and textareas
+      if (tagName === 'input' || tagName === 'textarea') {
+        return true;
+      }
+      // Skip contenteditable elements (rich text editors)
+      if (current.isContentEditable || current.contentEditable === 'true') {
+        return true;
+      }
+      // Skip common editor class names and roles
+      const role = current.getAttribute('role');
+      if (role === 'textbox' || role === 'input') {
+        return true;
+      }
+      // Skip draft.js, prosemirror, and other common editors
+      if (current.classList?.contains('public-DraftEditor-content') ||
+          current.classList?.contains('ProseMirror') ||
+          current.classList?.contains('ql-editor') ||
+          current.classList?.contains('tox-edit-area') ||
+          current.classList?.contains('monaco-editor') ||
+          current.classList?.contains('CodeMirror')) {
+        return true;
+      }
+    }
+    current = current.parentNode;
+  }
+  return false;
+}
+
 // Function to replace text in a text node with highlighting
 function replaceText(textNode) {
   const text = textNode.nodeValue;
@@ -1140,6 +1174,11 @@ function replaceText(textNode) {
   // Skip if already processed or inside our own elements
   if (!parent || parent.classList?.contains('maxrotting-replaced') ||
       parent.id === 'maxrotting-toggle') {
+    return;
+  }
+
+  // Skip if inside an editable area
+  if (isEditable(textNode)) {
     return;
   }
 
@@ -1227,6 +1266,23 @@ function walkTextNodes(node) {
     if (node.classList?.contains('maxrotting-replaced') || node.id === 'maxrotting-toggle') {
       return;
     }
+    // Skip contenteditable and other editable elements
+    if (node.isContentEditable || node.contentEditable === 'true') {
+      return;
+    }
+    const role = node.getAttribute?.('role');
+    if (role === 'textbox' || role === 'input') {
+      return;
+    }
+    // Skip common editor frameworks
+    if (node.classList?.contains('public-DraftEditor-content') ||
+        node.classList?.contains('ProseMirror') ||
+        node.classList?.contains('ql-editor') ||
+        node.classList?.contains('tox-edit-area') ||
+        node.classList?.contains('monaco-editor') ||
+        node.classList?.contains('CodeMirror')) {
+      return;
+    }
     // Convert to array to avoid live collection issues
     const children = Array.from(node.childNodes);
     for (const child of children) {
@@ -1243,6 +1299,10 @@ walkTextNodes(document.body);
 // Observe DOM changes for dynamically loaded content
 const observer = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
+    // Skip mutations inside editable areas
+    if (isEditable(mutation.target)) {
+      continue;
+    }
     for (const node of mutation.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
         // Skip our own elements
@@ -1250,6 +1310,10 @@ const observer = new MutationObserver((mutations) => {
           continue;
         }
         if (node.classList?.contains('maxrotting-replaced')) {
+          continue;
+        }
+        // Skip if inside editable area
+        if (isEditable(node)) {
           continue;
         }
         walkTextNodes(node);
