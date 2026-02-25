@@ -994,28 +994,224 @@ function escapeRegex(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Function to replace text in a text node
+// Track whether we're showing original text
+let showingOriginal = false;
+
+// Inject CSS styles for highlighting and tooltip
+function injectStyles() {
+  if (document.getElementById('maxrotting-styles')) return;
+
+  const style = document.createElement('style');
+  style.id = 'maxrotting-styles';
+  style.textContent = `
+    .maxrotting-replaced {
+      background: linear-gradient(to bottom, transparent 60%, rgba(138, 43, 226, 0.2) 60%);
+      border-radius: 2px;
+      cursor: help;
+      position: relative;
+    }
+
+    .maxrotting-replaced:hover {
+      background: rgba(138, 43, 226, 0.3);
+    }
+
+    .maxrotting-replaced::after {
+      content: attr(data-original);
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1a1a2e;
+      color: #fff;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      z-index: 10000;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    .maxrotting-replaced:hover::after {
+      opacity: 1;
+    }
+
+    .maxrotting-showing-original .maxrotting-replaced {
+      background: none;
+    }
+
+    .maxrotting-showing-original .maxrotting-replaced::after {
+      display: none;
+    }
+
+    #maxrotting-toggle {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 999999;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 12px 16px;
+      border-radius: 50px;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+      transition: all 0.3s ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #maxrotting-toggle:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+    }
+
+    #maxrotting-toggle:active {
+      transform: translateY(0);
+    }
+
+    #maxrotting-toggle .icon {
+      font-size: 16px;
+    }
+
+    #maxrotting-toggle.showing-original {
+      background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+      box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+    }
+
+    #maxrotting-toggle.showing-original:hover {
+      box-shadow: 0 6px 20px rgba(245, 87, 108, 0.5);
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// Create toggle button
+function createToggleButton() {
+  if (document.getElementById('maxrotting-toggle')) return;
+
+  const button = document.createElement('button');
+  button.id = 'maxrotting-toggle';
+  button.innerHTML = '<span class="icon">👁</span> View Original';
+  button.addEventListener('click', toggleOriginalText);
+  document.body.appendChild(button);
+}
+
+// Toggle between original and replaced text
+function toggleOriginalText() {
+  showingOriginal = !showingOriginal;
+  const button = document.getElementById('maxrotting-toggle');
+
+  if (showingOriginal) {
+    document.body.classList.add('maxrotting-showing-original');
+    button.innerHTML = '<span class="icon">🧠</span> View Brainrot';
+    button.classList.add('showing-original');
+
+    // Show original text
+    document.querySelectorAll('.maxrotting-replaced').forEach(el => {
+      el.dataset.brainrot = el.textContent;
+      el.textContent = el.dataset.original;
+    });
+  } else {
+    document.body.classList.remove('maxrotting-showing-original');
+    button.innerHTML = '<span class="icon">👁</span> View Original';
+    button.classList.remove('showing-original');
+
+    // Show brainrot text
+    document.querySelectorAll('.maxrotting-replaced').forEach(el => {
+      if (el.dataset.brainrot) {
+        el.textContent = el.dataset.brainrot;
+      }
+    });
+  }
+}
+
+// Function to replace text in a text node with highlighting
 function replaceText(textNode) {
-  let text = textNode.nodeValue;
-  let modified = false;
+  const text = textNode.nodeValue;
+  const parent = textNode.parentNode;
+
+  // Skip if already processed or inside our own elements
+  if (!parent || parent.classList?.contains('maxrotting-replaced') ||
+      parent.id === 'maxrotting-toggle') {
+    return;
+  }
+
+  // Build a list of all matches with their positions
+  const matches = [];
 
   for (const [original, replacement] of Object.entries(replacements)) {
     const regex = new RegExp(`\\b${escapeRegex(original)}\\b`, 'gi');
-    if (regex.test(text)) {
-      text = text.replace(regex, (match) => {
-        modified = true;
-        // Preserve capitalization
-        if (match[0] === match[0].toUpperCase()) {
-          return replacement.charAt(0).toUpperCase() + replacement.slice(1);
-        }
-        return replacement;
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        original: match[0],
+        replacement: replacement
       });
     }
   }
 
-  if (modified) {
-    textNode.nodeValue = text;
+  if (matches.length === 0) return;
+
+  // Sort matches by position and remove overlaps (keep longer matches)
+  matches.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+
+  const filtered = [];
+  let lastEnd = 0;
+  for (const m of matches) {
+    if (m.start >= lastEnd) {
+      filtered.push(m);
+      lastEnd = m.end;
+    }
   }
+
+  if (filtered.length === 0) return;
+
+  // Create document fragment with replacements
+  const fragment = document.createDocumentFragment();
+  let currentPos = 0;
+
+  for (const m of filtered) {
+    // Add text before match
+    if (m.start > currentPos) {
+      fragment.appendChild(document.createTextNode(text.slice(currentPos, m.start)));
+    }
+
+    // Create highlighted span for the replacement
+    const span = document.createElement('span');
+    span.className = 'maxrotting-replaced';
+    span.dataset.original = m.original;
+
+    // Preserve capitalization
+    let replacementText = m.replacement;
+    if (m.original[0] === m.original[0].toUpperCase()) {
+      replacementText = replacementText.charAt(0).toUpperCase() + replacementText.slice(1);
+    }
+
+    span.textContent = showingOriginal ? m.original : replacementText;
+    if (showingOriginal) {
+      span.dataset.brainrot = replacementText;
+    }
+
+    fragment.appendChild(span);
+    currentPos = m.end;
+  }
+
+  // Add remaining text
+  if (currentPos < text.length) {
+    fragment.appendChild(document.createTextNode(text.slice(currentPos)));
+  }
+
+  // Replace the text node with the fragment
+  parent.replaceChild(fragment, textNode);
 }
 
 // Function to walk through all text nodes
@@ -1023,18 +1219,25 @@ function walkTextNodes(node) {
   if (node.nodeType === Node.TEXT_NODE) {
     replaceText(node);
   } else if (node.nodeType === Node.ELEMENT_NODE) {
-    // Skip script, style, textarea, and input elements
+    // Skip script, style, textarea, input, and our own elements
     const tagName = node.tagName.toLowerCase();
     if (['script', 'style', 'textarea', 'input', 'noscript'].includes(tagName)) {
       return;
     }
-    for (const child of node.childNodes) {
+    if (node.classList?.contains('maxrotting-replaced') || node.id === 'maxrotting-toggle') {
+      return;
+    }
+    // Convert to array to avoid live collection issues
+    const children = Array.from(node.childNodes);
+    for (const child of children) {
       walkTextNodes(child);
     }
   }
 }
 
-// Run on page load
+// Initialize
+injectStyles();
+createToggleButton();
 walkTextNodes(document.body);
 
 // Observe DOM changes for dynamically loaded content
@@ -1042,6 +1245,13 @@ const observer = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
     for (const node of mutation.addedNodes) {
       if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) {
+        // Skip our own elements
+        if (node.id === 'maxrotting-toggle' || node.id === 'maxrotting-styles') {
+          continue;
+        }
+        if (node.classList?.contains('maxrotting-replaced')) {
+          continue;
+        }
         walkTextNodes(node);
       }
     }
@@ -1053,4 +1263,4 @@ observer.observe(document.body, {
   subtree: true
 });
 
-console.log("Maxrotting activated. Your browsing experience is now bussin fr fr no cap.");
+console.log("Maxrotting activated. Hover over purple highlights to see original text, or click the button to toggle all.");
